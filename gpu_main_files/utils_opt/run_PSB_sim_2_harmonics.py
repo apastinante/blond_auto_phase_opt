@@ -31,7 +31,7 @@ import cupy as cp
 from copy import deepcopy
 
 from scipy.constants import c, e, m_p
-from utils_plotter.drawnow import *
+from .drawnow import Waterfaller, WaterfallerOpt
 
 
 import blond.utils.bmath as bm
@@ -46,6 +46,7 @@ from blond.input_parameters.ring import Ring,RingOptions
 
 from blond.monitors.monitors import BunchMonitor
 from blond.plots.plot import Plot
+from blond.plots.plot_beams import plot_long_phase_space
 from blond.plots.plot_impedance import (plot_impedance_vs_frequency,
                                         plot_induced_voltage_vs_bin_centers)
 from blond.trackers.tracker import FullRingAndRF,RingAndRFTracker
@@ -77,7 +78,7 @@ def comp_phase_array(time_arr,phase_array,phase_n,n_times):
 
     return dummy_sol
 
-def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, voltages=None):
+def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, voltages=None, full_phase = None):
     """
     This function runs the simulation for a given turn range and is made such that
     it allows the function to be passes to an optimizer that computes a constant phase
@@ -129,6 +130,8 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
     this_directory = os.path.dirname(os.path.realpath(__file__)) + '/'
 
     USE_GPU = True
+    if USE_GPU:
+        bm.use_py() # For the setup
     
 
     # SIMULATION PARAMETERS -------------------------------------------------------
@@ -157,8 +160,8 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
     C = 2 * np.pi * radius  # [m]
 
     # Tracking details
-    n_turns_between_two_plots = 10000 # One plot roughly every 3ms
-    n_turns_between_wf_update = 200 # One plot roughly every 0.1ms, 
+    n_turns_between_two_plots = 10000 # One plot roughly every 10ms
+    n_turns_between_wf_update = 200 # One waterfall update roughly every 0.2ms, 
     # NOTE: n_turns_between_wf_update also defines the dt of the reward computation
 
     # Derived parameters
@@ -196,12 +199,15 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
             v2 = v_p[1]
             time = v_p[2] 
             phase1 = np.ones_like(v1) * np.pi
-            phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+            if not final_run:
+                phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
 
         else:
             v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
             v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
-            phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+            if not final_run:
+                phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+
             phase1 = 1 * np.pi * np.ones_like(v1)
 
             # Allow for altering v1 and v2 using an interactive plot (only for the 1st opt. run)
@@ -218,7 +224,11 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
             # Turn them back into seconds
             v1 = (sync_momentum[0], v1)
             v2 = (sync_momentum[0], v2)
-            phase2 = (sync_momentum[0], phase2)
+            if final_run:
+                phase2 = phase_programme
+            else:
+                phase2 = (sync_momentum[0], phase2)
+
             phase1 = (sync_momentum[0], phase1)
     
     else: 
@@ -230,14 +240,17 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
             phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
         else: 
             phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
-
-        phase1 = (sync_momentum[0], phase1)
+            
         phase2 = (sync_momentum[0], phase2)
+        phase1 = (sync_momentum[0], phase1)
+            
 
     # mpl.use('Agg')
 
     # # DEFINE REAL RING------------------------------------------------------------------
-    if init: 
+    if init or final_run: 
+
+        
 
         n_slices = np.round(ring.t_rev[0] / width_bin).astype(int)
 
@@ -245,6 +258,8 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
                             (v1,v2), (phase1, phase2), n_rf_systems)
 
         my_beam = Beam(ring, n_macroparticles, n_particles)
+
+        
 
         slice_beam = Profile(my_beam, CutOptions(cut_left=0,
                                                 cut_right=ring.t_rev[0], n_slices=n_slices))
@@ -304,6 +319,8 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
         # DEFINE BEAM------------------------------------------------------------------
         matched_from_distribution_function(my_beam, Full_rrf, distribution_type='parabolic_line',bunch_length=sigma_dt*4)
 
+        my_beam.statistics()
+
         turn_saved = 1
 
         # LOAD IMPEDANCE TABLES--------------------------------------------------------
@@ -356,12 +373,6 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
     # PLOTS
 
 
-    # plots = Plotgpu(ring, RF_sct_par, my_beam, 1, n_turns, 0,
-    #              5.72984173562e-7, - my_beam.sigma_dE * 4.2, my_beam.sigma_dE * 4.2, xunit='s',
-    #              separatrix_plot=True, Profile=slice_beam, h5file=this_directory + '../output_files/EX_02_output_data',
-    #              histograms_plot=True, format_options=format_options)
-
-
     
 
     if USE_GPU:
@@ -376,100 +387,156 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
         # dir_space_charge.to_gpu()
         total_induced_voltage.to_gpu()
         
-    # Plotgpu has to go after sending data to GPU, otherwise, another fix is required as well
-
-    if final_run:
         
-        format_options = {'dirname': this_directory +
-                    '../gpu_output_files/EX_02_fig', 'linestyle': '-'}
-        plots = Plot(ring, RF_sct_par, my_beam, n_turns_between_two_plots, ring.n_turns, 0,
-                    1.1e-6, - my_beam.sigma_dE * 8, my_beam.sigma_dE * 8, xunit='s',
-                    separatrix_plot=True, Profile=slice_beam, h5file=None,
-                    histograms_plot=True, format_options=format_options)
-
-
-
 
         # map_ = [ring_RF_section] + [total_induced_voltage]#+ [slice_beam]   + [plots] #  + [bunchmonitor]
 
         # map_ = [ring_RF_section] + [total_induced_voltage] #+ [slice_beam] 
 
     # TRACKING + PLOTS-------------------------------------------------------------
-    for i in range(turn_range[0], turn_range[1] + 1):
-
-        if i == turn_saved:
-            if USE_GPU:
-                ring_RF_section.to_cpu()
-                slice_beam.to_cpu()
-                total_induced_voltage.to_cpu()
-                new_Objects = [deepcopy(ring_RF_section), deepcopy(slice_beam), deepcopy(total_induced_voltage)]
-                ring_RF_section.to_gpu()
-                slice_beam.to_gpu()
-                total_induced_voltage.to_gpu()
-            else:
-                new_Objects = [deepcopy(ring_RF_section), deepcopy(slice_beam), deepcopy(total_induced_voltage)]
-
+    if final_run:
+        format_options = {'dirname': this_directory +
+                    '../gpu_output_files/EX_02_fig', 'linestyle': '-'}
+        plots = Plot(ring, RF_sct_par, my_beam, n_turns_between_two_plots, ring.n_turns, 0,
+                    ring.t_rev, - my_beam.sigma_dE *13, my_beam.sigma_dE * 13, xunit='s',
+                    separatrix_plot=True, Profile=slice_beam, h5file=None,
+                    histograms_plot=True, format_options=format_options, GPU_bool=USE_GPU)
+        # THIS MADE ME 
         
-        ring_RF_section.track()
-        ring_RF_section.totalInducedVoltage.track()
-        ring_RF_section.profile.track()
-
-        
-        if final_run:
+        for i in range(1, ring.n_turns + 1):
+            
+            ring_RF_section.track()
+            ring_RF_section.totalInducedVoltage.track()
+            ring_RF_section.profile.track()
             plots.track()
-        if i==turn_range[0]: 
-            # We want to save the initial beam profile
             
-            wf = Waterfaller(ring_RF_section.profile, i,  sampling_d_turns = n_turns_between_wf_update , 
-                            n_turns= turn_range[1], # Set to None if you want to plot individual ranges
-                            traces = None, USE_GPU=USE_GPU)
+            # if i==turn_range[0]: 
+            #     # We want to save the initial beam profile
+            #     wf = Waterfaller(ring_RF_section.profile, i,  sampling_d_turns = n_turns_between_wf_update , 
+            #                     n_turns= turn_range[1], # Set to None if you want to plot individual ranges
+            #                     traces = None, USE_GPU=USE_GPU)
 
-        # Update the waterfall plot
-        if not init:
-            wf.update(ring_RF_section.profile,i)
-
-        
-            
-        if final_run: 
-            # Plots
+            # Update the waterfall plot
+            # if not init:
+            #     wf.update(ring_RF_section.profile,i
+                
+                # Plots
             if (i % n_turns_between_two_plots) == 0:
                 print('We are on turn ', i , '= ', ring.cycle_time[i]*1000 , ' ms')
                 slice_beam.beam_spectrum_freq_generation(slice_beam.n_slices)
                 slice_beam.beam_spectrum_generation(slice_beam.n_slices)
 
-                # if USE_GPU:
-                #     bm.use_cpu()
-                #     # total_induced_voltage.to_cpu()
-                #     # ind_volt_freq.to_cpu()
-                #     slice_beam.to_cpu()
+                    # if USE_GPU:
+                    #     bm.use_cpu()
+                    #     # total_induced_voltage.to_cpu()
+                    #     # ind_volt_freq.to_cpu()
+                    #     slice_beam.to_cpu()
 
-                # # plot_impedance_vs_frequency(ind_volt_freq, figure_index=i, cut_up_down=(0, 1000), cut_left_right=(0, 3e9),
-                # #                             show_plots=False,
-                # #                             plot_total_impedance=False, style='-', plot_interpolated_impedances=False,
-                # #                             plot_spectrum=False, dirname=this_directory + '../gpu_output_files/EX_02_fig', log=True)
+                    # # plot_impedance_vs_frequency(ind_volt_freq, figure_index=i, cut_up_down=(0, 1000), cut_left_right=(0, 3e9),
+                    # #                             show_plots=False,
+                    # #                             plot_total_impedance=False, style='-', plot_interpolated_impedances=False,
+                    # #                             plot_spectrum=False, dirname=this_directory + '../gpu_output_files/EX_02_fig', log=True)
 
-                # # plot_induced_voltage_vs_bin_centers(total_induced_voltage, style='.',
-                # #                                     dirname=this_directory + '../gpu_output_files/EX_02_fig', show_plots=False)
+                    # # plot_induced_voltage_vs_bin_centers(total_induced_voltage, style='.',
+                    # #                                     dirname=this_directory + '../gpu_output_files/EX_02_fig', show_plots=False)
 
-                # if USE_GPU:
-                #     bm.use_gpu()
-                #     # total_induced_voltage.to_gpu()
-                #     # ind_volt_freq.to_gpu()
-                #     slice_beam.to_gpu()
+                    # if USE_GPU:
+                    #     bm.use_gpu()
+                    #     # total_induced_voltage.to_gpu()
+                    #     # ind_volt_freq.to_gpu()
+                    #     slice_beam.to_gpu()
 
-    if USE_GPU:
-        bm.use_cpu()
-        # RF_sct_par.to_cpu()
-        # my_beam.to_cpu()
-        ring_RF_section.to_cpu()
-        slice_beam.to_cpu()
-        # Full_rrf.to_cpu()
-        # ind_volt_freq.to_cpu()
-        # steps.to_cpu()
-        # dir_space_charge.to_cpu()
-        total_induced_voltage.to_cpu()
+        if USE_GPU:
+            bm.use_cpu()
+            # RF_sct_par.to_cpu()
+            # my_beam.to_cpu()
+            ring_RF_section.to_cpu()
+            slice_beam.to_cpu()
+            # Full_rrf.to_cpu()
+            # ind_volt_freq.to_cpu()
+            # steps.to_cpu()
+            # dir_space_charge.to_cpu()
+            total_induced_voltage.to_cpu()
+        
+        return
+    
+    else:
 
-    return new_Objects, phase2
+        for i in range(turn_range[0], turn_range[1] + 1):
+
+            if i == turn_saved:
+                if USE_GPU:
+                    ring_RF_section.to_cpu()
+                    slice_beam.to_cpu()
+                    total_induced_voltage.to_cpu()
+                    new_Objects = [deepcopy(ring_RF_section), deepcopy(slice_beam), deepcopy(total_induced_voltage)]
+                    ring_RF_section.to_gpu()
+                    slice_beam.to_gpu()
+                    total_induced_voltage.to_gpu()
+                else:
+                    new_Objects = [deepcopy(ring_RF_section), deepcopy(slice_beam), deepcopy(total_induced_voltage)]
+
+            
+            ring_RF_section.track()
+            ring_RF_section.totalInducedVoltage.track()
+            ring_RF_section.profile.track()
+
+            
+            if final_run:
+                plots.track()
+            if i==turn_range[0]: 
+                # We want to save the initial beam profile
+                
+                wf = Waterfaller(ring_RF_section.profile, i,  sampling_d_turns = n_turns_between_wf_update , 
+                                n_turns= turn_range[1], # Set to None if you want to plot individual ranges
+                                traces = None, USE_GPU=USE_GPU)
+
+            # Update the waterfall plot
+            if not init:
+                wf.update(ring_RF_section.profile,i)
+
+            
+                
+            # if final_run: 
+            #     # Plots
+            #     if (i % n_turns_between_two_plots) == 0:
+            #         print('We are on turn ', i , '= ', ring.cycle_time[i]*1000 , ' ms')
+            #         slice_beam.beam_spectrum_freq_generation(slice_beam.n_slices)
+            #         slice_beam.beam_spectrum_generation(slice_beam.n_slices)
+
+                    # if USE_GPU:
+                    #     bm.use_cpu()
+                    #     # total_induced_voltage.to_cpu()
+                    #     # ind_volt_freq.to_cpu()
+                    #     slice_beam.to_cpu()
+
+                    # # plot_impedance_vs_frequency(ind_volt_freq, figure_index=i, cut_up_down=(0, 1000), cut_left_right=(0, 3e9),
+                    # #                             show_plots=False,
+                    # #                             plot_total_impedance=False, style='-', plot_interpolated_impedances=False,
+                    # #                             plot_spectrum=False, dirname=this_directory + '../gpu_output_files/EX_02_fig', log=True)
+
+                    # # plot_induced_voltage_vs_bin_centers(total_induced_voltage, style='.',
+                    # #                                     dirname=this_directory + '../gpu_output_files/EX_02_fig', show_plots=False)
+
+                    # if USE_GPU:
+                    #     bm.use_gpu()
+                    #     # total_induced_voltage.to_gpu()
+                    #     # ind_volt_freq.to_gpu()
+                    #     slice_beam.to_gpu()
+
+        if USE_GPU:
+            bm.use_cpu()
+            # RF_sct_par.to_cpu()
+            # my_beam.to_cpu()
+            ring_RF_section.to_cpu()
+            slice_beam.to_cpu()
+            # Full_rrf.to_cpu()
+            # ind_volt_freq.to_cpu()
+            # steps.to_cpu()
+            # dir_space_charge.to_cpu()
+            total_induced_voltage.to_cpu()
+
+        return new_Objects, phase2
 
 def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, unique = False):
     """
@@ -902,3 +969,49 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
 
     
     return profiles
+
+if __name__ == '__main__':
+    import matplotlib as mpl
+    mpl.use('TkAgg')
+    bm.use_precision('single')
+
+    #Read the phase profile from the best fit
+    this_directory = os.path.dirname(os.path.abspath(__file__))
+    phase = np.load(this_directory + '/../../Sols/shape_full_58_cumsum/phase_array.npy') # (time, phase2)
+    sync_momentum = np.load(this_directory + '/../../input_files/1_4GeVOperational.npy')# in eV/c 
+
+    t_arr = sync_momentum[0] #in s
+    program = sync_momentum[1] * 1e-4 # in Tesla
+    # Machine and RF parameters
+    radius = 25 # [m]
+    bend_radius = 8.239 # [m]
+    gamma_transition = 4.4  # [1]
+    C = 2 * np.pi * radius  # [m]
+    momentum_compaction = 1 / (gamma_transition)**2 # [-]
+
+    sync_momentum = program * bend_radius *c #/1e9 # in GeV/c
+    inj_t = 275  # in s
+    ext_t = 805  # in s
+
+    index_inj = np.where(t_arr <= inj_t)[0][-1]
+    index_ext = np.where(t_arr >= ext_t)[0][0]
+
+    t_arr = t_arr[index_inj:index_ext]
+    t_arr = (t_arr - t_arr[0])/1e3
+    sync_momentum = sync_momentum[index_inj:index_ext]
+
+
+    t_range = [inj_t, ext_t]
+    total_sim_t = (ext_t - inj_t)/1000
+    t_range = [0,t_arr[-1]]
+    dt = 0.1 # in ms for the timeseries
+    sync_momentum = (t_arr, sync_momentum)
+
+    phase = (phase[0][0], phase[0][1])
+
+    ring = Ring(C, momentum_compaction, sync_momentum,
+            Proton())
+
+    # Run the simulation
+    run_simulation(None,None,ring,phase, None,sync_momentum, None, final_run = True,init=True, voltages=None)
+

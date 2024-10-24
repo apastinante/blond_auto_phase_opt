@@ -6,12 +6,15 @@ import matplotlib.pyplot as plt
 import os 
 from functools import partial
 # import sys 
+import time 
 from skopt import gp_minimize 
 from skopt.plots import plot_gaussian_process 
 
 # Home-made functions and classes
 
 from utils_opt.func_utils import *
+from utils_opt.drawnow import *
+from utils_opt.run_PSB_sim_2_harmonics import *
 # from scipy.optimize import minimize_scalar
 from utils_opt.drawnow import ProgramDefOpt, tolSetter
 
@@ -123,6 +126,8 @@ def obj_func_plotter(xs,means,stds,evals,turns):
 
 # Define workers 
 bm.use_precision('single')
+# Interesting error occurs when I dont put this, it tries to use Numba, and then the locations of the 2 slice_beams are different and that causes an Assertion error
+bm.use_py()
 
 # Define booleans
 loading = True
@@ -156,7 +161,7 @@ sync_ref_mom = np.sqrt(tot_beam_energy**2 - E_0**2)  # [eV/c]
 n_rf_systems = 2
 # harmonic_numbers = 1
 harmonic_numbers = [1,2]
-voltage_program = [8e3, 5e3]  # [V]
+voltage_program = [8e3, 3e3]  # [V]
 phi_offset = np.pi
 
 #Get the magnetic field and voltage programs for TOF and ISOHRS using pyda
@@ -191,6 +196,8 @@ index_ext = np.where(t_arr >= ext_t)[0][0]
 t_arr = t_arr[index_inj:index_ext]
 t_arr = (t_arr - t_arr[0])/1e3
 sync_momentum = sync_momentum[index_inj:index_ext]
+kin_energy = kin_energy[index_inj:index_ext]
+
 
 t_range = [inj_t, ext_t]
 total_sim_t = (ext_t - inj_t)/1000
@@ -198,7 +205,7 @@ t_range = [0,t_arr[-1]]
 dt = 0.1 # in ms for the timeseries
 
 sync_momentum = (t_arr, sync_momentum)
-
+kin_energy = (t_arr, kin_energy)
 
 # Define the ring and the optimization ranges per optimization run ----------------
 ring = Ring(C, momentum_compaction, sync_momentum,
@@ -207,7 +214,8 @@ ring = Ring(C, momentum_compaction, sync_momentum,
 # Initialize the program definer
 v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
 v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
-plots = ProgramDefOpt(v1,v2, time=sync_momentum[0], sync_momentum=sync_momentum[1])
+plots = ProgramDefOpt(v1,v2, time=kin_energy[0], sync_momentum=kin_energy[1])
+plots.save_data('opt_run')
 
 v1 = plots.v1
 v2 = plots.v2
@@ -357,7 +365,6 @@ for entry in sim_arr:
 # # Main loop
 max_iter = 11
 init_phi_est = np.pi
-print('The amount of simulated turns is', simulated_turns, 'which means an aditional (simulation only) computational load of', (simulated_turns/ring.n_turns -1)*100*max_iter, '%')
 
 global Objects
 
@@ -367,12 +374,16 @@ means = []
 std = []
 xs = []
 evals = []
+percent_alives = []
+unique_bool = False
+factor = 0.4 # Factor determining the region of exploration
+obj_func_used = comp_obj
 
 for i, entry in enumerate(sim_arr):
     
     # phi_val.value = init_phi_est
     if i == 0:
-        obj_func = partial(comp_obj2,interp_ref_beam, entry, None,ring, None, None, sync_momentum , init = True,unique = True)
+        obj_func = partial(obj_func_used,interp_ref_beam, entry, None,ring, None, None, sync_momentum, init = True,unique = unique_bool)
         phi_val = np.pi
         # phi_val = gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, x0= [phi_val],verbose=True, acq_func="PI", n_random_starts=max_iter//5)## print(obj_func.value)
         # Here the init is set in the special run case
@@ -384,20 +395,35 @@ for i, entry in enumerate(sim_arr):
         Objects, phase2_arr = run_simulation(entry, None, ring, None, None, sync_momentum, phi_val, init = True, voltages=voltages)
         phis.append(phi_val)
         init_phi_est = phi_val
-        
-        print('{x:2f} of the beam is alive'.format(x=Objects[0].beam.n_macroparticles_alive/Objects[0].beam.n_macroparticles))
+        percent_alive = np.sum(Objects[0].profile.n_macroparticles)/Objects[0].beam.n_macroparticles * 100
+        print('{x:2f} of the beam is alive'.format(x=percent_alive))
 
     else:
         print(entry)
-        obj_func =  partial(comp_obj2, interp_ref_beam, entry, [t_arr[i], t_arr[i-1]],ring, phase2_arr[1],Objects, sync_momentum, init = False, unique = True)
+        obj_func =  partial(obj_func_used, interp_ref_beam, entry, [t_arr[i], t_arr[i-1]],ring, phase2_arr[1],Objects, sync_momentum, init = False, unique = unique_bool)
+
+        # if i == 1:
+        #     a = time.time()
+        #     dummy_err = obj_func(init_phi_est)
+        #     b = time.time()
+        #     print('The time taken for the first run of the objective function was', b-a)
+
+            
+
+
+
+
 
         if i<=3: # Use the calculated stable phase
-            phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -0.4*np.pi, np.clip(phi_s1[entry[2]-1] +0.4*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+            phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+
+
+            # phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
         else: # Use the previous value as the center-point
-            phi_val = gp_minimize(obj_func, [(np.clip(phis[-1] -0.4*np.pi, a_min=0, a_max=None), np.clip(phis[-1] +0.4*np.pi, a_max=2*np.pi, a_min=None))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+            phi_val = gp_minimize(obj_func, [(np.clip(phis[-1] -factor*np.pi, a_min=0, a_max=None), np.clip(phis[-1] +factor*np.pi, a_max=2*np.pi, a_min=None))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
-                #gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, n_random_starts=5,random_state=1234) 
+                #gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, n_random_starts=5,random_state=1234) v
         print('Problem solved with value', phi_val)
 
         # Get the probed values
@@ -412,26 +438,32 @@ for i, entry in enumerate(sim_arr):
         means.append(mean_i)
         std.append(std_i)
         xs.append(x_i)
+        percent_alives.append(percent_alive)
 
         # Run the simulation to save the objects
-        Objects, phase2_arr = run_simulation(entry, [t_arr[i], t_arr[i-1]], ring, phase2_arr[1], Objects, sync_momentum, phi_val.x[0], init = False )
+        Objects, phase2_arr = run_simulation(entry, [t_arr[i], t_arr[i-1]], ring, phase2_arr[1], Objects, sync_momentum, phi_val.x[0], init = False , voltages=voltages)
         phis.append(phi_val.x[0])
         init_phi_est = phi_val.x[0]
-        print('{x:2f} percent of the beam is alive'.format(x=Objects[0].beam.n_macroparticles_alive/Objects[0].beam.n_macroparticles*100))
+        percent_alive = np.sum(Objects[0].profile.n_macroparticles)/n_macroparticles *100
+        percent_alives.append(percent_alive)
+        print('{x:2f} percent of the beam is alive'.format(x=percent_alive))
+        
 
         
-    
 
 
 means = np.array(means)
 std = np.array(std)
 xs = np.array(xs)
+
+evals = np.array(evals)
+
 turn_plots = np.zeros_like(means)
 for i, entry in enumerate(sim_arr):
     if i ==0: 
         pass 
     else:
-        turn_plots[i,:] = entry[2]
+        turn_plots[i-1,:] = entry[2]
     
 
 
@@ -439,15 +471,22 @@ for i, entry in enumerate(sim_arr):
 obj_func_plotter(xs.flatten(),means.flatten(),std.flatten(),evals,turn_plots.flatten())
 
 
+fig, ax = plt.subplots()
+ax.plot(t_arr*1000, phis, 'k.')
+ax.set_xlabel('Time [ms]')
+ax.set_ylabel('Phase [rad]')
+ax.set_title(r'Optimized 2nd Harmonic Absolute Phase $\Phi_2$')
 
-
-
+percent_alives = np.array(percent_alives)
 # Save the phase array 
 np.save('mean_obj.npy', means)
 np.save('std_obj.npy', std)
 np.save('x_obj.npy', xs)
+np.save('evals.npy', evals)
+np.save('turns.npy', turn_plots)
 np.save('phase_array.npy', np.array([phase2_arr]))
 np.save('t_arr.npy' , t_arr)
+np.save('percent_alives.npy', percent_alives)
 
 
 

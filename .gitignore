@@ -1,5 +1,7 @@
-\gpu_output_files
+gpu_output_files
 obj_func_mean.png
 obj_func_std.png
 phase_array.npy
 t_arr.npy
+Sols
+gpu_main_files\gpu_output_files

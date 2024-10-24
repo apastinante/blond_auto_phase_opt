@@ -556,27 +556,36 @@ class ProgramDefOpt(object):
 
             self.fig4 = plt.figure(figsize=(6,9))
             self.ax4 = self.fig4.add_subplot(111)
-            self.ax4.plot(self.time, self.sync_momentum, 'r', label = 'Momentum program')
+            self.ax4.plot(self.time*1e3, self.sync_momentum/1e9, 'r', label = 'Kinetic Energy')
+            self.ax4t = self.ax4.twiny()
             self.ax4.grid()
-            self.ax4.set_xlabel('Time [s]')
-            self.ax4.set_ylabel('Momentum [eV/c]')
-            self.ax4.set_title('Momentum program')
-            if self.t_range is not None:
+            self.ax4.set_xlabel('Time [ms]')
+            self.ax4t.set_xlabel('Cycle-Time [ms]')
+            self.ax4.set_ylabel('Kinetic Energy [GeV]')
+            self.ax4.set_title('Kinetic Energy Program')
+            self.ax4.set_xlim(self.time[0]*1e3, self.time[-1]*1e3)
+            self.ax4t.set_xlim(self.time[0]*1e3 + 275, self.time[-1]*1e3 + 275)
 
-                self.ax4.axvline(self.t_range[0], color = 'r', linestyle = '--')
-                self.ax4.axvline(self.t_range[1], color = 'r', linestyle = '--')
-                self.ax.axvline(self.t_range[0], color = 'r', linestyle = '--')
-                self.ax.axvline(self.t_range[1], color = 'r', linestyle = '--')
-                self.ax2.axvline(self.t_range[0], color = 'r', linestyle = '--')
-                self.ax2.axvline(self.t_range[1],color = 'r', linestyle = '--')
+            x4t_tickers = np.arange(275, 275 + self.time[-1]*1e3,100)
 
+            x4t_tickers = np.append(x4t_tickers[:-1], round(self.time[-1]*1e3 + 275))
 
-                index1 = np.where(self.time <= self.t_range[0])[0][-1]
+            x4t_tickers = list(x4t_tickers)
+            self.ax4t.set_xticks(x4t_tickers)
+            x4t_tickers = np.append(x4t_tickers[:-1], round(self.time[-1]*1e3 + 276))
+            ticker_labels = ["C-"+str(int(x)) for x in x4t_tickers]
+            self.ax4t.set_xticklabels(ticker_labels)
 
-                if self.windowed:
-                    # Set all values of voltage arrays to 0 before index1
-                    self.v1[:index1] = 0
-                    self.v2[:index1] = 0
+            self.ax4t.xaxis.set_ticks_position("bottom")
+            self.ax4t.xaxis.set_label_position("bottom")
+            self.ax4t.spines['bottom'].set_position(('outward', 45))
+        
+            index1 = np.where(self.time <= self.t_range[0])[0][-1]
+
+            if self.windowed:
+                # Set all values of voltage arrays to 0 before index1
+                self.v1[:index1] = 0
+                self.v2[:index1] = 0
                 
 
 

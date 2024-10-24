@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.interpolate import interp1d
-from utils_opt.run_PSB_sim_2_harmonics import *
+from .run_PSB_sim_2_harmonics import *
 from scipy.signal import butter,lfilter
 from copy import deepcopy
+import time 
 # from sys import getsizeof
 # import logging
 
@@ -54,25 +55,54 @@ def comp_prof(ref_Profile):
     represent the entire bunch)
     Currently it trims anything below 0.1% of the max
     """
+# CURRENT METHOD 
     # Get the reference normalized profile shape in y direction
-    norm_ref_profile = ref_Profile[1] / np.max(ref_Profile[1])
+    norm_ref_profile = np.abs(ref_Profile[1]) / np.max(ref_Profile[1])
     
-    idx = np.where(norm_ref_profile >= 0.0001)[0] # This 0.1% value might need revisiting
+    # idx = np.where(norm_ref_profile >= 0.001)[0] # THIS IS WHAT CAUSES ISSUES OF LOCATION OF THE PHASE VALUE! 
+
+    integrator = np.cumsum(norm_ref_profile)/np.sum(norm_ref_profile)
+    # integrator = np.cumsum(norm_ref_profile)/np.max(np.cumsum(norm_ref_profile))
+    idxi = np.where(integrator >= 0.025)[0]
+
+    idxf = np.where(integrator >= 0.975)[0]
+
+    
+    norm_ref_profile = norm_ref_profile[idxi[0]:idxf[0]]
+
 
     # Check where there is a discontinuity in the index (because of oscillations at the end of the profile)
     # and keep the lower half of the profile
-    eliminate = np.where(np.diff(idx) != 1)[0]
+    # eliminate = np.where(np.diff(idx) != 1)[0]
     
-    if len(eliminate) == 0:
-        pass
-    else:
-        idx = idx[:eliminate[0]+1] # This now has the indexes of the main lobe
+    # if len(eliminate) == 0:
+    #     pass
+    # else:
+    #     idx = idx[:eliminate[0]+1] # This now has the indexes of the main lobe
+
+    # # Get the bunch length 
+    bunch_array = ref_Profile[0][idxi[0]:idxf[0]] 
+
+# #PREVIOUS METHOD 
+#    # Get the reference normalized profile shape in y direction
+#     norm_ref_profile = np.abs(ref_Profile[1]) / np.max(ref_Profile[1])
+    
+#     idx = np.where(norm_ref_profile >= 0.0001)[0] # This 0.1% value might need revisiting
+
+#     # Check where there is a discontinuity in the index (because of oscillations at the end of the profile)
+#     # and keep the lower half of the profile
+#     eliminate = np.where(np.diff(idx) != 1)[0]
+    
+#     if len(eliminate) == 0:
+#         pass
+#     else:
+#         idx = idx[:eliminate[0]+1] # This now has the indexes of the main lobe
 
 
-    # Get the bunch length 
-    bunch_array = ref_Profile[0][idx] 
+#     # Get the bunch length 
+#     bunch_array = ref_Profile[0][idx] 
 
-    norm_ref_profile = norm_ref_profile[idx]
+#     norm_ref_profile = norm_ref_profile[idx]
 
     bunchlength= bunch_array[-1] - bunch_array[0]
 
@@ -86,11 +116,11 @@ def comp_prof(ref_Profile):
 def comp_flat_index(normalized_profile):
     # Get the 3sigma  of the normalized profile
     
-    integrator = np.cumsum(normalized_profile)/np.max(np.cumsum(normalized_profile))
+    integrator = np.cumsum(normalized_profile)/np.max(np.sum(normalized_profile))
 
-    idxi = np.where(integrator >= 0.03)[0]
+    idxi = np.where(integrator >= 0.00001)[0]
 
-    idxf = np.where(integrator >= 0.97)[0]
+    idxf = np.where(integrator >= 0.99999)[0]
 
     
     reference = normalized_profile[idxi[0]:idxf[0]]
@@ -172,8 +202,9 @@ def comp_obj(normalized_ref_profile, turn_range,n_times,ring,phase_programme, Ob
 
     Objects_copy = [deepcopy(Object) for Object in Objects]
     
+    
     normalized_profiles = run_simulation_int(turn_range,n_times,ring,phase_programme, Objects_copy,sync_momentum,n_phase, unique=unique, final_run = final_run,init=init)
-
+    
     
     normalized_profiless = [filter_data(normalized_profile) for normalized_profile in normalized_profiles]
 
@@ -201,7 +232,9 @@ def comp_obj2(normalized_ref_profile, turn_range,n_times,ring,phase_programme, O
 
     Objects_copy = [deepcopy(Object) for Object in Objects]
     
+   
     normalized_profiles = run_simulation_int(turn_range,n_times,ring,phase_programme, Objects_copy,sync_momentum,n_phase, unique=unique, final_run = final_run,init=init)
+    
 
     # normalized_profiless = [filter_data(normalized_profile) for normalized_profile in normalized_profiles]
 
