@@ -12,6 +12,7 @@ from skopt.plots import plot_gaussian_process
 
 # Home-made functions and classes
 
+
 from utils_opt.func_utils import *
 from utils_opt.drawnow import *
 from utils_opt.run_PSB_sim_2_harmonics import *
@@ -26,7 +27,10 @@ from blond.beam.distributions import matched_from_distribution_function
 from blond.beam.profile import CutOptions, Profile
 from blond.input_parameters.rf_parameters import RFStation
 from blond.input_parameters.ring import Ring
+from blond.input_parameters.ring import Ring
 from blond.trackers.tracker import FullRingAndRF,RingAndRFTracker
+
+
 
 
 
@@ -97,12 +101,16 @@ def obj_func_plotter(xs,means,stds,evals,turns):
     # Plot the the objective function at every sampled turn in a colorplot
     plt.close('all')
 
+    # Plot the the objective function at every sampled turn in a colorplot
+    plt.close('all')
+
     fig = plt.figure()
     
 
     ax = fig.add_subplot(111)
     
 
+    p = ax.scatter(xs, turns, c=means, cmap='viridis',linewidth = 0, antialiased=False)
     p = ax.scatter(xs, turns, c=means, cmap='viridis',linewidth = 0, antialiased=False)
     # obs = ax.plot(evals,turns, 'k.')
     
@@ -112,6 +120,7 @@ def obj_func_plotter(xs,means,stds,evals,turns):
 
     fig1 = plt.figure()
     ax1 = fig1.add_subplot(111)
+    s = ax1.scatter(xs, turns, c=stds, cmap='viridis',linewidth = 0, antialiased=False)
     s = ax1.scatter(xs, turns, c=stds, cmap='viridis',linewidth = 0, antialiased=False)
 
     ax1.set_xlabel('Phase [rad]')
@@ -262,7 +271,9 @@ interp_ref_beam = comp_prof([ref_slice_beam.bin_centers, ref_slice_beam.n_macrop
 
 
 
+
 # Initialize the 2nd reference RFStation for computing the array
+
 
 ref_RF_section = RFStation(ring, [1], (voltages[0]), (sync_momentum[0], np.pi*np.ones_like(sync_momentum[0])), 1)
 ref_voltage = ref_RF_section.voltage[0]
@@ -429,6 +440,7 @@ for i, entry in enumerate(sim_arr):
         # Get the probed values
         evals.append(np.vstack((np.array(phi_val.x_iters).flatten() , phi_val.func_vals)))
 
+        # Get the model values for the objective function and its standard deviation
         # Get the model values for the objective function and its standard deviation
         x_i = np.linspace(phi_val.space.dimensions[0].bounds[0] , phi_val.space.dimensions[0].bounds[1],1000)
         x_model_i = phi_val.space.dimensions[0].transform(x_i)
