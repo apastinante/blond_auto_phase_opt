@@ -149,9 +149,9 @@ dt_opt = 20 * 1e-3 # 10 ms
 
 # Initialize the reference beam ------------------------------------------------
 # Ref beam parameters
-n_particles = 2e13
+n_particles = 0.9e13
 n_macroparticles = 1e6
-sigma_dt = 400e-9 /4  # [s]
+sigma_dt = 700e-9 /4  # [s]
 kin_beam_energy = 160e6  # [eV] # We take the reference beam at 160 MeV
 
 # Machine and RF parameters
@@ -184,7 +184,8 @@ phi_offset = np.pi
 # DEFINE THE ACTUAL RING + BEAM PROFILE ------------------------------------------------
 # Load the momentum program
 this_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
-sync_momentum = np.load(this_directory + '../input_files/1_4GeVOperational.npy')# in eV/c 
+# sync_momentum = np.load(this_directory + '../input_files/1_4GeVOperational.npy')# in eV/c 
+sync_momentum = np.load(this_directory + '../v_programs_dt/MD3/mag_field.npy')# in eV/c 
 
 t_arr = sync_momentum[0] #in s
 program = sync_momentum[1] * 1e-4 # in Tesla
@@ -203,7 +204,7 @@ index_inj = np.where(t_arr <= inj_t)[0][-1]
 index_ext = np.where(t_arr >= ext_t)[0][0]
 
 t_arr = t_arr[index_inj:index_ext]
-t_arr = (t_arr - t_arr[0])/1e3
+t_arr = (t_arr-t_arr[0])/1e3
 sync_momentum = sync_momentum[index_inj:index_ext]
 kin_energy = kin_energy[index_inj:index_ext]
 
@@ -221,16 +222,38 @@ ring = Ring(C, momentum_compaction, sync_momentum,
             Proton())
 
 # Initialize the program definer
-v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
-v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
+# v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
+# v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
+v1 = np.load(this_directory + '../v_programs_dt/MD3/v1a.npy') # in V
+v2 = np.load(this_directory + '../v_programs_dt/MD3/v2a.npy') # in V
+
+index_inj_v1 = np.where(v1[0] <= inj_t)[0][-1]
+index_ext_v1 = np.where(v1[0] >= ext_t)[0][0]
+
+index_inj_v2 = np.where(v2[0] <= inj_t)[0][-1]
+index_ext_v2 = np.where(v2[0] >= ext_t)[0][0]
+
+try:
+    v1 = v1[:,index_inj_v1:index_ext_v1+1]
+except: 
+    v1 = v1[:,index_inj_v1:]
+try:
+    v2 = v2[:,index_inj_v2:index_ext_v2+1]
+except: 
+    v2 = v2[:,index_inj_v2:]
+
+
+
+
+
 plots = ProgramDefOpt(v1,v2, time=kin_energy[0], sync_momentum=kin_energy[1])
-plots.save_data('opt_run')
+# plots.save_data('opt_run')
 
 v1 = plots.v1
 v2 = plots.v2
 
 
-voltages = [(sync_momentum[0], v1), (sync_momentum[0], v2)]
+voltages = [((v1[0]-v1[0][0])/1e3, v1[1]), ((v2[0]-v2[0][0])/1e3, v2[1])]
 
 fmax=200e6
 width_bin = 1/(2*fmax)
@@ -243,7 +266,7 @@ n_slices = np.round(ref_ring.t_rev[0] / width_bin).astype(int)
 
 ref_beam = Beam(ref_ring, n_macroparticles, n_particles)
 
-ref_RF_section = RFStation(ref_ring, harmonic_numbers, [v1[0],v2[0]], [np.pi, np.pi], n_rf_systems)
+ref_RF_section = RFStation(ref_ring, harmonic_numbers, [np.max(v1[1]),np.max(v2[1])], [np.pi, np.pi], n_rf_systems)
 
 ref_ring_RF_section = RingAndRFTracker(ref_RF_section, ref_beam)
 
@@ -302,7 +325,7 @@ while t_count < total_sim_t:
     if initial == 0:
         t_count += dt_opt
         turn = np.where(ring.cycle_time <= t_count)[0][-1]
-        sim_arr.append([dummy,turn, dummy_2])
+        sim_arr.append([dummy,3000, dummy_2])
         initial = 1
         dummy_2 = turn
     elif initial == 1:
@@ -362,7 +385,7 @@ while t_count < total_sim_t:
     
 
 sim_arr = np.array(sim_arr)
-sim_arr[:,1] = sim_arr[:,2]
+sim_arr[1:-1,1] = sim_arr[1:-1,2]
 t_arr = np.array(t_arr)
 
 # Add the turn_vals at which to force the optimizer to compute the phase
@@ -394,24 +417,24 @@ for i, entry in enumerate(sim_arr):
     
     # phi_val.value = init_phi_est
     if i == 0:
-        obj_func = partial(obj_func_used,interp_ref_beam, entry, None,ring, None, None, sync_momentum, init = True,unique = unique_bool)
+        obj_func = partial(obj_func_used,interp_ref_beam, entry, None,ring, None, None, sync_momentum, voltages=voltages ,init = True,unique = unique_bool)
         phi_val = np.pi
-        # phi_val = gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, x0= [phi_val],verbose=True, acq_func="PI", n_random_starts=max_iter//5)## print(obj_func.value)
         # Here the init is set in the special run case
+        phi_val = gp_minimize(obj_func, [(-0.3*np.pi, 2*np.pi)],n_calls=round(max_iter*1.3), x0= [ [element] for element in np.linspace(-0.3*np.pi, 1*np.pi,7)],verbose=True, acq_func="PI", n_random_starts=max_iter//5)## print(obj_func.value)
 
 
         print('Problem solved with value', phi_val)
 
         print(entry)
-        Objects, phase2_arr = run_simulation(entry, None, ring, None, None, sync_momentum, phi_val, init = True, voltages=voltages)
-        phis.append(phi_val)
-        init_phi_est = phi_val
+        Objects, phase2_arr = run_simulation(entry, None, ring, None, None, sync_momentum, phi_val.x[0], init = True, voltages=voltages)
+        phis.append(phi_val.x[0])
+        init_phi_est = phi_val.x[0]
         percent_alive = np.sum(Objects[0].profile.n_macroparticles)/Objects[0].beam.n_macroparticles * 100
         print('{x:2f} of the beam is alive'.format(x=percent_alive))
 
     else:
         print(entry)
-        obj_func =  partial(obj_func_used, interp_ref_beam, entry, [t_arr[i], t_arr[i-1]],ring, phase2_arr[1],Objects, sync_momentum, init = False, unique = unique_bool)
+        obj_func =  partial(obj_func_used, interp_ref_beam, entry, [t_arr[i], t_arr[i-1]],ring, phase2_arr[1],Objects, sync_momentum, init = False, unique = unique_bool, voltages=voltages)
 
         # if i == 1:
         #     a = time.time()
@@ -425,14 +448,16 @@ for i, entry in enumerate(sim_arr):
 
 
 
-        if i<=3: # Use the calculated stable phase
-            phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+        # if i<=3: # Use the calculated stable phase
+        #     phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
 
-            # phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+        #     # phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
-        else: # Use the previous value as the center-point
-            phi_val = gp_minimize(obj_func, [(np.clip(phis[-1] -factor*np.pi, a_min=0, a_max=None), np.clip(phis[-1] +factor*np.pi, a_max=2*np.pi, a_min=None))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+        # else: # Use the previous value as the center-point
+        x_min = np.clip(phis[-1] -factor*np.pi, a_min=0, a_max=None)
+        x_max = np.clip(phis[-1] +factor*np.pi, a_max=2*np.pi, a_min=None)
+        phi_val = gp_minimize(obj_func, [(x_min, x_max)], x0= [ [element] for element in np.linspace(x_min, x_max,5)], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
                 #gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, n_random_starts=5,random_state=1234) v
         print('Problem solved with value', phi_val)
@@ -450,7 +475,6 @@ for i, entry in enumerate(sim_arr):
         means.append(mean_i)
         std.append(std_i)
         xs.append(x_i)
-        percent_alives.append(percent_alive)
 
         # Run the simulation to save the objects
         Objects, phase2_arr = run_simulation(entry, [t_arr[i], t_arr[i-1]], ring, phase2_arr[1], Objects, sync_momentum, phi_val.x[0], init = False , voltages=voltages)
@@ -484,10 +508,13 @@ obj_func_plotter(xs.flatten(),means.flatten(),std.flatten(),evals,turn_plots.fla
 
 
 fig, ax = plt.subplots()
-ax.plot(t_arr*1000, phis, 'k.')
+ax.plot(t_arr*1000, phis, label = r'Optimized Phase $\Phi_2$')
+ax.plot(ring.cycle_time[:-1]*1000, phi_s1, label = r'Single Harmonic Stable Phase $\phi_{s0}$')
 ax.set_xlabel('Time [ms]')
 ax.set_ylabel('Phase [rad]')
 ax.set_title(r'Optimized 2nd Harmonic Absolute Phase $\Phi_2$')
+ax.legend()
+plt.show(block=True)
 
 percent_alives = np.array(percent_alives)
 # Save the phase array 

@@ -132,7 +132,7 @@ def comp_flat_index(normalized_profile):
 
 
 
-def comp_obj(normalized_ref_profile, turn_range,n_times,ring,phase_programme, Objects,sync_momentum,n_phase, final_run = False,init=False, unique = False, log_locals = False, verbose = False):
+def comp_obj(normalized_ref_profile, turn_range,n_times,ring,phase_programme, Objects,sync_momentum,n_phase, final_run = False,init=False, unique = False, log_locals = False, verbose = False, voltages = None):
     
     """
     Compute the difference between the normalized reference profile and the profiles
@@ -199,11 +199,13 @@ def comp_obj(normalized_ref_profile, turn_range,n_times,ring,phase_programme, Ob
     #     logging.debug(f'INTERNALS: {element} : {getsizeof(loc[element])}')
 
     # logging.debug('RFR:{x}, Profile: {y}, IndV: {z}, {turn}'.format(x = getsizeof(Objects[0]),y = getsizeof(Objects[1]),z = getsizeof(Objects[2]) , turn = turn_range[1]))
-
-    Objects_copy = [deepcopy(Object) for Object in Objects]
+    if init:
+        Objects_copy = None
+    else:
+        Objects_copy = [deepcopy(Object) for Object in Objects]
     
     
-    normalized_profiles = run_simulation_int(turn_range,n_times,ring,phase_programme, Objects_copy,sync_momentum,n_phase, unique=unique, final_run = final_run,init=init)
+    normalized_profiles = run_simulation_int(turn_range,n_times,ring,phase_programme, Objects_copy,sync_momentum,n_phase, unique=unique, final_run = final_run,init=init, voltages=voltages)
     
     
     normalized_profiless = [filter_data(normalized_profile) for normalized_profile in normalized_profiles]

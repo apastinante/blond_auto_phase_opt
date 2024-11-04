@@ -138,19 +138,13 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
     # Load momentum program?
     loading = True
 
-    # Option to use loaded programme or define it right now
-    if init:
-        sequential = False
-    else:
-        sequential = True
-
     save_data = True
     name = 'opt_run'
 
     # Beam parameters
-    n_particles = 2e13
+    n_particles = 0.9e13
     n_macroparticles = 1e6
-    sigma_dt = 400e-9 /4  # [s]
+    sigma_dt = 700e-9 /4  # [s]
     kin_beam_energy = 160e6  # [eV]
 
     # Machine and RF parameters
@@ -538,7 +532,7 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
 
         return new_Objects, phase2
 
-def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, unique = False):
+def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, unique = False, voltages = None):
     """
     This function runs the simulation for a given turn range and is made such that
     it allows the function to be passes to an optimizer that computes a constant phase
@@ -585,7 +579,8 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
     this_directory = os.path.dirname(os.path.realpath(__file__)) + '/'
 
     USE_GPU = True
-    
+    if USE_GPU:
+        bm.use_py() # For the setup
 
     # SIMULATION PARAMETERS -------------------------------------------------------
     # Load momentum program?
@@ -601,9 +596,9 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
     name = 'opt_run'
 
     # Beam parameters
-    n_particles = 2e13
+    n_particles = 0.9e13
     n_macroparticles = 1e6
-    sigma_dt = 400e-9 /4  # [s]
+    sigma_dt = 700e-9 /4  # [s]
 
     # Machine and RF parameters
 
@@ -633,42 +628,102 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
 
 
     # CREATE THE ARRAYS FOR THE VOLTAGE AND PHASE OVER TIME----------------------
+    # CREATE THE ARRAYS FOR THE VOLTAGE AND PHASE OVER TIME----------------------
+    if voltages == None:
+        if not init:
+            # NOTE: the loaded time series should have the same size as the synchotron momentum program 
+            # If this is not the case, the program will crash
 
-    if not init:
-        # NOTE: the loaded time series should have the same size as the synchotron momentum program 
-        # If this is not the case, the program will crash
+            v_p = np.load(this_directory + '../../v_programs_dt/'+ name +'.npy')
+            v1 = v_p[0]
+            v2 = v_p[1]
+            time = v_p[2] 
+            phase1 = np.ones_like(v1) * np.pi
+            if not final_run:
+                phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
 
-        v_p = np.load(this_directory + '../../v_programs_dt/'+ name +'.npy')
-        v1 = v_p[0]
-        v2 = v_p[1]
-        phase1 = np.ones_like(v1) * np.pi
-        phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+        else:
+            v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
+            v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
+            if not final_run:
+                phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
 
-    else:
-        v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
-        v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
-        phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
-        phase1 = 1 * np.pi * np.ones_like(v1)
+            phase1 = 1 * np.pi * np.ones_like(v1)
 
-        # Allow for altering v1 and v2 using an interactive plot (only for the 1st opt. run)
-        # plots = ProgramDefOpt(v1,v2, time=sync_momentum[0], sync_momentum=sync_momentum[1])
-        
-        # Compute the phase for the current optimization run
-        # phase2 = comp_phase_array(sync_momentum[0],phase2,n_phase,n_time, dt)
+            # Allow for altering v1 and v2 using an interactive plot (only for the 1st opt. run)
+            # plots = ProgramDefOpt(v1,v2, time=sync_momentum[0], sync_momentum=sync_momentum[1])
+            
+            # Compute the phase for the current optimization run
+            # phase2 = comp_phase_array(sync_momentum[0],phase2,n_phase,n_time, dt)
 
-    # if save_data:
-    #     plots.save_data('opt_run')
+        # if save_data:
+            # plots.save_data('opt_run')
 
-    #Construct tuples
-    if loading:
-        # Turn them back into seconds
-        v1 = (sync_momentum[0], v1)
-        v2 = (sync_momentum[0], v2)
+        #Construct tuples
+        if loading:
+            # Turn them back into seconds
+            v1 = (sync_momentum[0], v1)
+            v2 = (sync_momentum[0], v2)
+            if final_run:
+                phase2 = phase_programme
+            else:
+                phase2 = (sync_momentum[0], phase2)
+
+            phase1 = (sync_momentum[0], phase1)
+    
+    else: 
+
+        v1 = voltages[0]
+        v2 = voltages[1]
+        phase1 = np.ones_like(sync_momentum[0]) * np.pi
+        if not init:
+            phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+        else: 
+            phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+            
         phase2 = (sync_momentum[0], phase2)
         phase1 = (sync_momentum[0], phase1)
-        
+            
 
     # mpl.use('Agg')
+
+
+    # if not init:
+    #     # NOTE: the loaded time series should have the same size as the synchotron momentum program 
+    #     # If this is not the case, the program will crash
+
+    #     # v_p = np.load(this_directory + '../../v_programs_dt/'+ name +'.npy')
+    #     # v1 = v_p[0]
+    #     # v2 = v_p[1]
+    #     phase1 = np.ones_like(sync_momentum[0]) * np.pi
+    #     phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+
+    # else:
+    #     v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
+    #     v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
+    #     phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+    #     phase1 = 1 * np.pi * np.ones_like(v1)
+    #     n_turns_between_wf_update = 20
+
+    #     # Allow for altering v1 and v2 using an interactive plot (only for the 1st opt. run)
+    #     # plots = ProgramDefOpt(v1,v2, time=sync_momentum[0], sync_momentum=sync_momentum[1])
+        
+    #     # Compute the phase for the current optimization run
+    #     # phase2 = comp_phase_array(sync_momentum[0],phase2,n_phase,n_time, dt)
+
+    # # if save_data:
+    # #     plots.save_data('opt_run')
+
+    # #Construct tuples
+    # if loading:
+    #     # Turn them back into seconds
+    #     # v1 = (sync_momentum[0], v1)
+    #     # v2 = (sync_momentum[0], v2)
+    #     phase2 = (sync_momentum[0], phase2)
+    #     phase1 = (sync_momentum[0], phase1)
+        
+
+    # # mpl.use('Agg')
 
     # # DEFINE REAL RING------------------------------------------------------------------
     if init: 

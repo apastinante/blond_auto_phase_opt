@@ -60,7 +60,43 @@ turns4 = np.load(home_dir+'./shape_58_full/turns.npy')
 xs4 = np.load(home_dir+'./shape_58_full/x_obj.npy')
 
 
+# read the MD3 files
 
+mean5 = np.load(home_dir+'./MD3/mean_obj.npy')
+phase_arr5 = np.load(home_dir+'./MD3/phase_array.npy')
+phase_arr5 = np.squeeze(phase_arr5)
+t_arr5 = np.load(home_dir+'./MD3/t_arr.npy')
+turns5 = np.load(home_dir+'./MD3/turns.npy')
+xs5 = np.load(home_dir+'./MD3/x_obj.npy')
+percent_alives5 = np.load(home_dir+'./MD3/percent_alives.npy')
+
+# read the MD3_improved files
+
+mean6 = np.load(home_dir+'./MD3_improved/mean_obj.npy')
+phase_arr6 = np.load(home_dir+'./MD3_improved/phase_array.npy')
+phase_arr6 = np.squeeze(phase_arr6)
+t_arr6 = np.load(home_dir+'./MD3_improved/t_arr.npy')
+turns6 = np.load(home_dir+'./MD3_improved/turns.npy')    
+xs6 = np.load(home_dir+'./MD3_improved/x_obj.npy')
+percent_alives6 = np.load(home_dir+'./MD3_improved/percent_alives.npy')
+
+fig404, ax404 = plt.subplots(1,1)
+
+ax404.plot(phase_arr5[0],phase_arr5[1], label = 'MD3')
+ax404.plot(phase_arr6[0],phase_arr6[1], label = 'MD3_improved')
+ax404.set_xlabel('Time [ms]')
+ax404.set_ylabel('Phase [rad]')
+ax404.set_title('Optimized 2nd Harmonic Absolute Phase $\Phi_2$ for MD3 and MD3_improved')
+ax404.legend()
+
+fig405, ax405 = plt.subplots(1,1)
+
+ax405.plot(phase_arr5[0],percent_alives5, label = 'MD3')
+ax405.plot(phase_arr6[0],percent_alives6, label = 'MD3 improved')
+ax405.set_xlabel('Time [ms]')
+ax405.set_ylabel('Percentage of Particles in Bucket')
+ax405.set_title('Percentage of Particles in Bucket for MD3 and MD3_improved')
+ax405.legend()
 
 fig , ax = plt.subplots(1,1)
 
