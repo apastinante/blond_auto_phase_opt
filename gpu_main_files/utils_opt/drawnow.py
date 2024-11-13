@@ -935,7 +935,7 @@ class ProgramDefOpt(object):
 
 
 class WaterfallerOpt:
-    def __init__(self, Profile, curr_turn, sampling_d_turns =100, n_turns = None, traces = 10000, USE_GPU = False):
+    def __init__(self, Profile, curr_turn, sampling_d_turns =100, n_turns = None, traces = 10000, USE_GPU = False, n_macroparticles = None):
         """"
         Makes a waterfall plot by taking the traces of the profile
         and plotting them in a waterfall plot
@@ -971,46 +971,88 @@ class WaterfallerOpt:
         self.n_turns = n_turns
         self.counter = 1
         self.globalcounter = curr_turn
+        self.n_macroparticles = np.sum(self.data[0][1]) 
         self.z_s = [self.globalcounter]
-        
+        self.obj_data = [1.]
 
         # Fail safe situation due to operator error 
         if n_turns is None and traces is None:
             self.traces = 10000
         
 
-    def update(self,Profile,curr_turn):
+    def update(self,Profile,curr_turn,corrections=False):
         self.globalcounter = curr_turn
         
 
         if self.globalcounter % self.sampling == 0:
-            if self.USE_GPU:
-                self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+            
+            if corrections==False:
+                if self.USE_GPU:
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
             else:
-                self.data.append((Profile.bin_centers,Profile.n_macroparticles))
+                if self.USE_GPU:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles.get())
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles)
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
             self.z_s.append(self.globalcounter)
 
             
         
 
         if self.globalcounter == self.n_turns:
-            if self.USE_GPU:
-                self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
-            else:
-                self.data.append((Profile.bin_centers,Profile.n_macroparticles))
             self.z_s.append(self.globalcounter)
-            self.plot()
-            return self.data
+            if corrections==False:
+                if self.USE_GPU:
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
+                
+                self.plot()
+                return self.data
+            else:
+                if self.USE_GPU:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles.get())
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles)
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
+                self.plot()
+                return [self.data, self.obj_data , 1]
 
         
 
         
         if self.globalcounter == self.traces:
             self.plot()
-            if self.USE_GPU:
-                self.data = [(self.Profile.bin_centers.get(),self.Profile.n_macroparticles.get())]
+            if corrections==False:
+                if self.USE_GPU:
+                    self.data = [(self.Profile.bin_centers.get(),self.Profile.n_macroparticles.get())]
+                else:
+                    self.data = [(self.Profile.bin_centers,self.Profile.n_macroparticles)]
             else:
-                self.data = [(self.Profile.bin_centers,self.Profile.n_macroparticles)]
+                if self.USE_GPU:
+                    self.data = [(self.Profile.bin_centers.get(),self.Profile.n_macroparticles.get())]
+                else:
+                    self.data = [(self.Profile.bin_centers,self.Profile.n_macroparticles)]
+                self.obj_data = [1.]
+                self.n_macroparticles = np.sum(self.data[0][1])
+
             self.counter = 1
             self.z_s = [self.globalcounter]
 

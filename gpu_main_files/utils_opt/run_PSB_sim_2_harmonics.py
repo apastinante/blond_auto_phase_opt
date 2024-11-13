@@ -31,7 +31,7 @@ import cupy as cp
 from copy import deepcopy
 
 from scipy.constants import c, e, m_p
-from .drawnow import Waterfaller, WaterfallerOpt
+from drawnow import Waterfaller, WaterfallerOpt
 
 
 import blond.utils.bmath as bm
@@ -78,7 +78,7 @@ def comp_phase_array(time_arr,phase_array,phase_n,n_times):
 
     return dummy_sol
 
-def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, voltages=None, full_phase = None):
+def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, voltages=None, full_phase = False):
     """
     This function runs the simulation for a given turn range and is made such that
     it allows the function to be passes to an optimizer that computes a constant phase
@@ -194,13 +194,19 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
             time = v_p[2] 
             phase1 = np.ones_like(v1) * np.pi
             if not final_run:
-                phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+                if full_phase:
+                    phase2 = phase_programme
+                else:
+                    phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
 
         else:
             v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
             v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
             if not final_run:
-                phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+                if full_phase:
+                    phase2 = phase_programme
+                else:
+                    phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
 
             phase1 = 1 * np.pi * np.ones_like(v1)
 
@@ -218,7 +224,7 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
             # Turn them back into seconds
             v1 = (sync_momentum[0], v1)
             v2 = (sync_momentum[0], v2)
-            if final_run:
+            if final_run or full_phase:
                 phase2 = phase_programme
             else:
                 phase2 = (sync_momentum[0], phase2)
@@ -231,9 +237,15 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
         v2 = voltages[1]
         phase1 = np.ones_like(sync_momentum[0]) * np.pi
         if not init:
-            phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+            if full_phase:
+                    phase2 = phase_programme
+            else:
+                phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
         else: 
-            phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+            if full_phase:
+                    phase2 = phase_programme
+            else:
+                phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
             
         phase2 = (sync_momentum[0], phase2)
         phase1 = (sync_momentum[0], phase1)
@@ -242,7 +254,7 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
     # mpl.use('Agg')
 
     # # DEFINE REAL RING------------------------------------------------------------------
-    if init or final_run: 
+    if init or final_run or full_phase: 
 
         
 
@@ -532,7 +544,7 @@ def run_simulation(turn_range,n_times,ring,phase_programme, Objects,sync_momentu
 
         return new_Objects, phase2
 
-def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, unique = False, voltages = None):
+def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_momentum, n_phase, final_run = False,init=False, voltages = None, full_phase = False, unique = False):
     """
     This function runs the simulation for a given turn range and is made such that
     it allows the function to be passes to an optimizer that computes a constant phase
@@ -604,7 +616,7 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
 
     # Tracking details
     n_turns_between_two_plots = 10000 # One plot roughly every 3ms
-    n_turns_between_wf_update = 200 # One plot roughly every 0.1ms, 
+    n_turns_between_wf_update = 1000 # One plot roughly every 0.4ms, 
     # NOTE: n_turns_between_wf_update also defines the dt of the reward computation
 
     # Derived parameters
@@ -629,6 +641,45 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
 
     # CREATE THE ARRAYS FOR THE VOLTAGE AND PHASE OVER TIME----------------------
     # CREATE THE ARRAYS FOR THE VOLTAGE AND PHASE OVER TIME----------------------
+    # if voltages == None:
+    #     if not init:
+            # NOTE: the loaded time series should have the same size as the synchotron momentum program 
+            # If this is not the case, the program will crash
+
+    # if not init:
+    #     # NOTE: the loaded time series should have the same size as the synchotron momentum program 
+    #     # If this is not the case, the program will crash
+
+    #     v_p = np.load(this_directory + '../../v_programs_dt/'+ name +'.npy')
+    #     v1 = v_p[0]
+    #     v2 = v_p[1]
+    #     phase1 = np.ones_like(v1) * np.pi
+    #     phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+
+    # else:
+    #     v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
+    #     v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
+    #     phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+    #     phase1 = 1 * np.pi * np.ones_like(v1)
+
+    #     # Allow for altering v1 and v2 using an interactive plot (only for the 1st opt. run)
+    #     # plots = ProgramDefOpt(v1,v2, time=sync_momentum[0], sync_momentum=sync_momentum[1])
+        
+    #     # Compute the phase for the current optimization run
+    #     # phase2 = comp_phase_array(sync_momentum[0],phase2,n_phase,n_time, dt)
+
+    # # if save_data:
+    # #     plots.save_data('opt_run')
+
+    # #Construct tuples
+    # if loading:
+    #     # Turn them back into seconds
+    #     v1 = (sync_momentum[0], v1)
+    #     v2 = (sync_momentum[0], v2)
+    #     phase2 = (sync_momentum[0], phase2)
+    #     phase1 = (sync_momentum[0], phase1)
+        
+# CREATE THE ARRAYS FOR THE VOLTAGE AND PHASE OVER TIME----------------------
     if voltages == None:
         if not init:
             # NOTE: the loaded time series should have the same size as the synchotron momentum program 
@@ -640,13 +691,19 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
             time = v_p[2] 
             phase1 = np.ones_like(v1) * np.pi
             if not final_run:
-                phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+                if full_phase:
+                    phase2 = phase_programme
+                else:
+                    phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
 
         else:
             v1 = voltage_program[0] * np.ones_like(sync_momentum[0])
             v2 = voltage_program[1] * np.ones_like(sync_momentum[0])
             if not final_run:
-                phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+                if full_phase:
+                    phase2 = phase_programme
+                else:
+                    phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
 
             phase1 = 1 * np.pi * np.ones_like(v1)
 
@@ -664,7 +721,7 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
             # Turn them back into seconds
             v1 = (sync_momentum[0], v1)
             v2 = (sync_momentum[0], v2)
-            if final_run:
+            if final_run or full_phase:
                 phase2 = phase_programme
             else:
                 phase2 = (sync_momentum[0], phase2)
@@ -677,11 +734,20 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
         v2 = voltages[1]
         phase1 = np.ones_like(sync_momentum[0]) * np.pi
         if not init:
-            phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
+            if full_phase:
+                    phase2 = phase_programme
+            else:
+                phase2 = comp_phase_array(sync_momentum[0],phase_programme,n_phase,n_times)
         else: 
-            phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
-            
-        phase2 = (sync_momentum[0], phase2)
+            if full_phase:
+                    phase2 = phase_programme
+            else:
+                phase2 = 1 * n_phase * np.ones_like(sync_momentum[0])
+        
+        if full_phase:
+            pass
+        else:
+            phase2 = (sync_momentum[0], phase2)
         phase1 = (sync_momentum[0], phase1)
             
 
@@ -726,7 +792,7 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
     # # mpl.use('Agg')
 
     # # DEFINE REAL RING------------------------------------------------------------------
-    if init: 
+    if init or final_run or full_phase: 
         turn_saved = 1
         n_slices = np.round(ring.t_rev[0] / width_bin).astype(int)
 
@@ -811,7 +877,7 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
         #     Ekicker[:, 0].real, Ekicker[:, 1].real, Ekicker[:, 1].imag)
 
     else: 
-        ring_RF_section, slice_beam, total_induced_voltage, turn_saved = deepcopy(Objects[0]), deepcopy(Objects[1]), deepcopy(Objects[2]),  turn_range[2]
+        ring_RF_section, slice_beam, total_induced_voltage, turn_saved = deepcopy(Objects[0]), deepcopy(Objects[1]), deepcopy(Objects[2]),  turn_range[1]
 
         ring_RF_section.rf_params.phi_rf_d = RFStationOptions().reshape_data((phase1, phase2),
                                                                             ring_RF_section.rf_params.n_turns,
@@ -911,17 +977,19 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
 
             # if not init: 
             #     print(ring_RF_section.beam.dt[10])
-
+            if np.sum(ring_RF_section.profile.n_macroparticles.get())/n_macroparticles <= 0.25:
+                print('Too much beam lost at turn: ', i)
+                return [wf.data, wf.obj_data, 0]
             
             if i==turn_range[0]: 
                 
                 wf = WaterfallerOpt(ring_RF_section.profile, i,  sampling_d_turns = n_turns_between_wf_update , 
                                 n_turns= turn_range[1], # Set to None if you want to plot individual ranges
-                                traces = None, USE_GPU=USE_GPU)
+                                traces = None, USE_GPU=USE_GPU, n_macroparticles=n_macroparticles)
 
             # Update the waterfall plot
             # if i == turn_range[1]:
-            profiles = wf.update(ring_RF_section.profile,i)
+            profiles = wf.update(ring_RF_section.profile,i,  corrections=True)
             # else:
             #     wf.update(ring_RF_section.profile,i)
             
@@ -964,7 +1032,7 @@ def run_simulation_int(turn_range,n_times,ring,phase_programme, Objects,sync_mom
             ring_RF_section.totalInducedVoltage.track()
             ring_RF_section.profile.track()
 
-
+            
             # if not init: 
             #     print(ring_RF_section.beam.dt[10])
             if i==turn_range[0]: 
