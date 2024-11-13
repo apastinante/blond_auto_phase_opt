@@ -729,9 +729,9 @@ class ProgramDefOpt(object):
 
 
         if self.time is not None:
-            self.xlab = 'Time [s]'
-            self.ax.plot(self.time, self.v1, 'g',label = 'h=1' )
-            self.ax2.plot(self.time, self.v2, 'g', label = 'h=2')
+            self.xlab = 'C-Time [ms]'
+            self.ax.plot(self.v1[0], self.v1[1], 'g',label = 'h=1' )
+            self.ax2.plot(self.v2[0], self.v2[1], 'g', label = 'h=2')
 
             # Set the minor ticks to be every 20
             self.minor_x = Multiple(denominator=5, number=100)
@@ -779,8 +779,8 @@ class ProgramDefOpt(object):
         
 
         # Keep the initial values for tracking
-        self.v1_prev = np.copy(self.v1)
-        self.v2_prev = np.copy(self.v2)
+        self.v1_prev = np.copy(self.v1[1])
+        self.v2_prev = np.copy(self.v2[1])
         
 
 
@@ -824,9 +824,9 @@ class ProgramDefOpt(object):
 
         if self.y1 < 0:
             self.y1 = 0
-            self.v1[index:] = self.y1
+            self.v1[1][index:] = self.y1
         else:
-            self.v1[index:] = self.y1
+            self.v1[1][index:] = self.y1
 
     def comp_v_2(self):
         # Find the closest index to the x data
@@ -837,17 +837,17 @@ class ProgramDefOpt(object):
 
         if self.y2 < 0:
             self.y2 = 0
-            self.v2[index:] = self.y2
+            self.v2[1][index:] = self.y2
         else: 
-            self.v2[index:] = self.y2
+            self.v2[1][index:] = self.y2
         
 
 
     def update_plot1(self):
         self.ax.clear()
         if self.time is not None:
-            self.ax.plot(self.time, self.v1_prev, 'k-', label = 'h=1 (prev)')
-            self.ax.plot(self.time, self.v1, 'g', label = 'h=1')
+            self.ax.plot(self.v1[0], self.v1_prev, 'k-', label = 'h=1 (prev)')
+            self.ax.plot(self.v1[0], self.v1[1], 'g', label = 'h=1')
             if self.t_range is not None:
                 self.ax.axvline(self.t_range[0], color = 'r', linestyle = '--')
                 self.ax.axvline(self.t_range[1], color = 'r', linestyle = '--')
@@ -855,7 +855,7 @@ class ProgramDefOpt(object):
             self.ax.plot(self.v1_prev, 'k-', label = 'h=1 (prev)')
             self.ax.plot(self.v1,'g' ,label = 'h=1')
 
-        self.ax.set_ylim(-0.1*np.max(self.v1), 1.5*np.max(self.v1))
+        self.ax.set_ylim(-0.1*np.max(self.v1[1]), 1.5*np.max(self.v1[1]))
         self.ax.set_xlabel(self.xlab)
         self.ax.set_ylabel(self.ylab)
         self.ax.xaxis.set_minor_locator(self.minor_x.locator())
@@ -867,8 +867,8 @@ class ProgramDefOpt(object):
     def update_plot2(self):
         self.ax2.clear()
         if self.time is not None:
-            self.ax2.plot(self.time, self.v2_prev, 'r-', label = 'h=2 (prev)')
-            self.ax2.plot(self.time, self.v2, 'b', label = 'h=2')
+            self.ax2.plot(self.v2[0], self.v2_prev, 'r-', label = 'h=2 (prev)')
+            self.ax2.plot(self.v2[0], self.v2[1], 'b', label = 'h=2')
             if self.t_range is not None:
                 self.ax2.axvline(self.t_range[0], color = 'r', linestyle = '--')
                 self.ax2.axvline(self.t_range[1], color = 'r', linestyle = '--')
@@ -907,14 +907,14 @@ class ProgramDefOpt(object):
                 os.makedirs('v_programs_dt')
 
             home_dir = os.getcwd() 
-            np.save( home_dir+'/v_programs_dt/'+name+'.npy', [self.v1, self.v2,self.time])
+            np.save( home_dir+'/v_programs_dt/'+name+'.npy', np.array([self.v1, self.v2]))
         
         else: 
             if not os.path.exists('v_programs'):
                 os.makedirs('v_programs')
         
 
-            np.save('v_programs/'+name+'.npy', [v1, v2])
+            np.save('v_programs/'+name+'.npy', np.array([self.v1, self.v2]))
     
     def save_data_full(self,name, phase):
         # Check if there is a v_programe folder
@@ -935,7 +935,7 @@ class ProgramDefOpt(object):
 
 
 class WaterfallerOpt:
-    def __init__(self, Profile, curr_turn, sampling_d_turns =100, n_turns = None, traces = 10000, USE_GPU = False):
+    def __init__(self, Profile, curr_turn, sampling_d_turns =100, n_turns = None, traces = 10000, USE_GPU = False, n_macroparticles = None):
         """"
         Makes a waterfall plot by taking the traces of the profile
         and plotting them in a waterfall plot
@@ -971,46 +971,88 @@ class WaterfallerOpt:
         self.n_turns = n_turns
         self.counter = 1
         self.globalcounter = curr_turn
+        self.n_macroparticles = np.sum(self.data[0][1]) 
         self.z_s = [self.globalcounter]
-        
+        self.obj_data = [1.]
 
         # Fail safe situation due to operator error 
         if n_turns is None and traces is None:
             self.traces = 10000
         
 
-    def update(self,Profile,curr_turn):
+    def update(self,Profile,curr_turn,corrections=False):
         self.globalcounter = curr_turn
         
 
         if self.globalcounter % self.sampling == 0:
-            if self.USE_GPU:
-                self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+            
+            if corrections==False:
+                if self.USE_GPU:
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
             else:
-                self.data.append((Profile.bin_centers,Profile.n_macroparticles))
+                if self.USE_GPU:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles.get())
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles)
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
             self.z_s.append(self.globalcounter)
 
             
         
 
         if self.globalcounter == self.n_turns:
-            if self.USE_GPU:
-                self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
-            else:
-                self.data.append((Profile.bin_centers,Profile.n_macroparticles))
             self.z_s.append(self.globalcounter)
-            self.plot()
-            return self.data
+            if corrections==False:
+                if self.USE_GPU:
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
+                
+                self.plot()
+                return self.data
+            else:
+                if self.USE_GPU:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles.get())
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers.get(),Profile.n_macroparticles.get()))
+                else:
+                    self.cur_n_macroparticles = np.sum(Profile.n_macroparticles)
+                    correction = (self.cur_n_macroparticles)/self.n_macroparticles
+                    # self.n_macroparticles = self.cur_n_macroparticles
+                    self.obj_data.append(correction)
+                    self.data.append((Profile.bin_centers,Profile.n_macroparticles))
+                self.plot()
+                return [self.data, self.obj_data , 1]
 
         
 
         
         if self.globalcounter == self.traces:
             self.plot()
-            if self.USE_GPU:
-                self.data = [(self.Profile.bin_centers.get(),self.Profile.n_macroparticles.get())]
+            if corrections==False:
+                if self.USE_GPU:
+                    self.data = [(self.Profile.bin_centers.get(),self.Profile.n_macroparticles.get())]
+                else:
+                    self.data = [(self.Profile.bin_centers,self.Profile.n_macroparticles)]
             else:
-                self.data = [(self.Profile.bin_centers,self.Profile.n_macroparticles)]
+                if self.USE_GPU:
+                    self.data = [(self.Profile.bin_centers.get(),self.Profile.n_macroparticles.get())]
+                else:
+                    self.data = [(self.Profile.bin_centers,self.Profile.n_macroparticles)]
+                self.obj_data = [1.]
+                self.n_macroparticles = np.sum(self.data[0][1])
+
             self.counter = 1
             self.z_s = [self.globalcounter]
 

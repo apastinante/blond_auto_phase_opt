@@ -9,6 +9,7 @@ from functools import partial
 import time 
 from skopt import gp_minimize 
 from skopt.plots import plot_gaussian_process 
+from skopt.plots import plot_objective
 
 # Home-made functions and classes
 
@@ -19,6 +20,7 @@ from utils_opt.run_PSB_sim_2_harmonics import *
 # from scipy.optimize import minimize_scalar
 from utils_opt.drawnow import ProgramDefOpt, tolSetter
 
+from skopt.learning import GaussianProcessRegressor
 
 #BLonD imports
 import blond.utils.bmath as bm
@@ -29,6 +31,22 @@ from blond.input_parameters.rf_parameters import RFStation
 from blond.input_parameters.ring import Ring
 from blond.input_parameters.ring import Ring
 from blond.trackers.tracker import FullRingAndRF,RingAndRFTracker
+
+from sklearn.gaussian_process.kernels import RBF, Kernel, WhiteKernel, ExpSineSquared, ConstantKernel,Hyperparameter
+from utils_opt.kernels import CausalQuasiPeriodicKernel,CausalRBFKernel
+def cqp_kernel_builder(ndims):
+    return CausalQuasiPeriodicKernel(#vert_length_scale_input = 1.0*np.ones(ndims), vert_length_scale_input_bounds = [(0.1, 100.0)]*ndims,
+                                     hor_length_scale_input=1.0*np.linspace(0.1, 30.0, ndims), hor_length_scale_input_bounds=[(0.1, 30.0)]*ndims,
+                                     vert_length_scale=1.0, vert_length_scale_bounds=(0.1, 100.0),
+                                     hor_length_scale_cov_per=1.0,  hor_length_scale_cov_per_bounds=(0.1, 100.0),
+                                     period_cov=2*np.pi, period_cov_bounds=(0.01, 100*np.pi),
+                                     hor_length_scale_cov_se=1.0 , hor_length_scale_cov_se_bounds=(0.1, 100.0))
+
+def crbf_kernel_builder(ndims):
+    return CausalRBFKernel(#vert_length_scale_input = 1.0*np.ones(ndims), vert_length_scale_input_bounds = [(0.1, 100.0)]*ndims,
+                           hor_length_scale_input=np.linspace(0.1, 30.0, ndims), hor_length_scale_input_bounds=[(1, 40.0)]*ndims,
+                           vert_length_scale=1.0, vert_length_scale_bounds=(5., 100.0),
+                           hor_length_scale_cov_se=1.0 , hor_length_scale_cov_se_bounds=(5., 100.0))
 
 
 
@@ -145,7 +163,7 @@ unique = True
 mpl.use('TkAgg')
 
 # Make an array defining the range of turns to simulate for that specific point
-dt_opt = 20 * 1e-3 # 10 ms
+dt_opt = 35 * 1e-3 # 10 ms
 
 # Initialize the reference beam ------------------------------------------------
 # Ref beam parameters
@@ -170,7 +188,7 @@ sync_ref_mom = np.sqrt(tot_beam_energy**2 - E_0**2)  # [eV/c]
 n_rf_systems = 2
 # harmonic_numbers = 1
 harmonic_numbers = [1,2]
-voltage_program = [8e3, 3e3]  # [V]
+voltage_program = [8e3, 5e3]  # [V]
 phi_offset = np.pi
 
 #Get the magnetic field and voltage programs for TOF and ISOHRS using pyda
@@ -246,11 +264,12 @@ except:
 
 
 
-plots = ProgramDefOpt(v1,v2, time=kin_energy[0], sync_momentum=kin_energy[1])
-# plots.save_data('opt_run')
+# plots = ProgramDefOpt(v1,v2, time=kin_energy[0], sync_momentum=kin_energy[1])
+# # plots.save_data('opt_run')
 
-v1 = plots.v1
-v2 = plots.v2
+# TESTING
+v1[1] = voltage_program[0]*np.ones_like(v1[0])
+v2 [1] = voltage_program[1]*np.ones_like(v2[0])
 
 
 voltages = [((v1[0]-v1[0][0])/1e3, v1[1]), ((v2[0]-v2[0][0])/1e3, v2[1])]
@@ -397,7 +416,7 @@ for entry in sim_arr:
 
 
 # # Main loop
-max_iter = 11
+max_iter = 20
 init_phi_est = np.pi
 
 global Objects
@@ -411,36 +430,68 @@ evals = []
 percent_alives = []
 unique_bool = False
 factor = 0.4 # Factor determining the region of exploration
-obj_func_used = comp_obj
+obj_func_used = comp_obj_multi
+obj_func = partial(obj_func_used,interp_ref_beam, sim_arr, t_arr ,ring, None, sync_momentum, voltages=voltages ,init = True, unique = unique_bool)
+list_s = [ [element] for element in np.linspace(-0.3*np.pi, 1*np.pi,4)]
+ndims = len(sim_arr)
 
-for i, entry in enumerate(sim_arr):
-    
-    # phi_val.value = init_phi_est
+# Make the kernel RBF with influence of only the previous point
+kernel = crbf_kernel_builder(ndims)
+gpr = GaussianProcessRegressor(kernel= kernel, alpha=5,#ConstantKernel(1.0, (0.001, 100.0)) * ExpSineSquared(), 
+                                   normalize_y=True,
+                                   n_restarts_optimizer=2
+                                   )
+
+# Find the indexes closest to the t_arr values in sync_momentum[0]
+phi_init = []
+phi_init2 = []
+for i,entry in enumerate(sim_arr[:-1]):
+    phi_init.append(phi_s1[entry[2]-1])
+    phi_init2.append(phi_s1[entry[2]-1] -0.3*np.pi)
+
+
+
+phi_init.append(phi_s1[sim_arr[-1][1]-1]-0.45*np.pi)
+phi_init2.append(phi_s1[sim_arr[-1][1]-1] -0.3*np.pi)
+
+
+phi_arr = gp_minimize(obj_func, [(0.47*np.pi, 1.03*np.pi) for i in range(len(t_arr))], base_estimator=gpr , n_calls=round(max_iter*1.3), verbose=True, acq_optimizer="lbfgs",acq_func="EI",n_initial_points=0, n_restarts_optimizer=1, x0=[phi_init2]) #, x0=[phi_init, phi_init2],initial_point_generator = 'lhs' ,verbose=True, acq_func="EI", n_random_starts=max_iter//5)## print(obj_func.value)
+
+for i, turn_range in enumerate(sim_arr):
     if i == 0:
-        obj_func = partial(obj_func_used,interp_ref_beam, entry, None,ring, None, None, sync_momentum, voltages=voltages ,init = True,unique = unique_bool)
-        phi_val = np.pi
-        # Here the init is set in the special run case
-        phi_val = gp_minimize(obj_func, [(-0.3*np.pi, 2*np.pi)],n_calls=round(max_iter*1.3), x0= [ [element] for element in np.linspace(-0.3*np.pi, 1*np.pi,7)],verbose=True, acq_func="PI", n_random_starts=max_iter//5)## print(obj_func.value)
-
-
-        print('Problem solved with value', phi_val)
-
-        print(entry)
-        Objects, phase2_arr = run_simulation(entry, None, ring, None, None, sync_momentum, phi_val.x[0], init = True, voltages=voltages)
-        phis.append(phi_val.x[0])
-        init_phi_est = phi_val.x[0]
-        percent_alive = np.sum(Objects[0].profile.n_macroparticles)/Objects[0].beam.n_macroparticles * 100
-        print('{x:2f} of the beam is alive'.format(x=percent_alive))
-
+        phase_programme_iter = phi_arr.x[i]*np.ones_like(sync_momentum[0])
     else:
-        print(entry)
-        obj_func =  partial(obj_func_used, interp_ref_beam, entry, [t_arr[i], t_arr[i-1]],ring, phase2_arr[1],Objects, sync_momentum, init = False, unique = unique_bool, voltages=voltages)
+        phase_programme_iter = comp_phase_array_multi(sync_momentum[0], phase_programme_iter,phi_arr.x[i], [t_arr[i], t_arr[i-1]])
+    
+np.save('phase_programme.npy', np.array([sync_momentum[0], phase_programme_iter]))#, phase_programme_iter)
+# for i, entry in enumerate(sim_arr):
+    
+#     # phi_val.value = init_phi_est
+#     if i == 0:
+#         obj_func = partial(obj_func_used,interp_ref_beam, sim_arr, t_arr ,ring, None, None, sync_momentum, voltages=voltages ,init = True,unique = unique_bool)
+#         phi_val = np.pi
+#         # Here the init is set in the special run case
+#         phi_val = gp_minimize(obj_func, [(-0.3*np.pi, 2*np.pi)],n_calls=round(max_iter*1.3), x0= [ [element] for element in np.linspace(-0.3*np.pi, 1*np.pi,7)],verbose=True, acq_func="PI", n_random_starts=max_iter//5)## print(obj_func.value)
 
-        # if i == 1:
-        #     a = time.time()
-        #     dummy_err = obj_func(init_phi_est)
-        #     b = time.time()
-        #     print('The time taken for the first run of the objective function was', b-a)
+
+#         print('Problem solved with value', phi_val)
+
+#         print(entry)
+#         Objects, phase2_arr = run_simulation(entry, None, ring, None, None, sync_momentum, phi_val.x[0], init = True, voltages=voltages)
+#         phis.append(phi_val.x[0])
+#         init_phi_est = phi_val.x[0]
+#         percent_alive = np.sum(Objects[0].profile.n_macroparticles)/Objects[0].beam.n_macroparticles * 100
+#         print('{x:2f} of the beam is alive'.format(x=percent_alive))
+
+#     else:
+#         print(entry)
+#         obj_func =  partial(obj_func_used, interp_ref_beam, entry, [t_arr[i], t_arr[i-1]],ring, phase2_arr[1],Objects, sync_momentum, init = False, unique = unique_bool, voltages=voltages)
+
+#         # if i == 1:
+#         #     a = time.time()
+#         #     dummy_err = obj_func(init_phi_est)
+#         #     b = time.time()
+#         #     print('The time taken for the first run of the objective function was', b-a)
 
             
 
@@ -448,85 +499,85 @@ for i, entry in enumerate(sim_arr):
 
 
 
-        # if i<=3: # Use the calculated stable phase
-        #     phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+#         # if i<=3: # Use the calculated stable phase
+#         #     phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
 
-        #     # phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+#         #     # phi_val = gp_minimize(obj_func, [(phi_s1[entry[2]-1] -factor*np.pi, np.clip(phi_s1[entry[2]-1] +factor*np.pi,a_min=None, a_max=2*np.pi))], x0= [init_phi_est], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
-        # else: # Use the previous value as the center-point
-        x_min = np.clip(phis[-1] -factor*np.pi, a_min=0, a_max=None)
-        x_max = np.clip(phis[-1] +factor*np.pi, a_max=2*np.pi, a_min=None)
-        phi_val = gp_minimize(obj_func, [(x_min, x_max)], x0= [ [element] for element in np.linspace(x_min, x_max,5)], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
+#         # else: # Use the previous value as the center-point
+#         x_min = np.clip(phis[-1] -factor*np.pi, a_min=0, a_max=None)
+#         x_max = np.clip(phis[-1] +factor*np.pi, a_max=2*np.pi, a_min=None)
+#         phi_val = gp_minimize(obj_func, [(x_min, x_max)], x0= [ [element] for element in np.linspace(x_min, x_max,5)], n_calls=max_iter, verbose=True, acq_func="PI" , n_random_starts=max_iter//5)## print(obj_func.value)
 
-                #gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, n_random_starts=5,random_state=1234) v
-        print('Problem solved with value', phi_val)
+#                 #gp_minimize(obj_func, [(0, np.pi*1.05)],n_calls=max_iter, n_random_starts=5,random_state=1234) v
+#         print('Problem solved with value', phi_val)
 
-        # Get the probed values
-        evals.append(np.vstack((np.array(phi_val.x_iters).flatten() , phi_val.func_vals)))
+#         # Get the probed values
+#         evals.append(np.vstack((np.array(phi_val.x_iters).flatten() , phi_val.func_vals)))
 
-        # Get the model values for the objective function and its standard deviation
-        # Get the model values for the objective function and its standard deviation
-        x_i = np.linspace(phi_val.space.dimensions[0].bounds[0] , phi_val.space.dimensions[0].bounds[1],1000)
-        x_model_i = phi_val.space.dimensions[0].transform(x_i)
-        x_model_i = x_model_i.reshape(-1,1)
-        mean_i, std_i = phi_val.models[-1].predict(x_model_i, return_std=True)
+#         # Get the model values for the objective function and its standard deviation
+#         # Get the model values for the objective function and its standard deviation
+#         x_i = np.linspace(phi_val.space.dimensions[0].bounds[0] , phi_val.space.dimensions[0].bounds[1],1000)
+#         x_model_i = phi_val.space.dimensions[0].transform(x_i)
+#         x_model_i = x_model_i.reshape(-1,1)
+#         mean_i, std_i = phi_val.models[-1].predict(x_model_i, return_std=True)
 
-        means.append(mean_i)
-        std.append(std_i)
-        xs.append(x_i)
-        percent_alives.append(percent_alive)
+#         means.append(mean_i)
+#         std.append(std_i)
+#         xs.append(x_i)
+#         percent_alives.append(percent_alive)
 
-        # Run the simulation to save the objects
-        Objects, phase2_arr = run_simulation(entry, [t_arr[i], t_arr[i-1]], ring, phase2_arr[1], Objects, sync_momentum, phi_val.x[0], init = False , voltages=voltages)
-        phis.append(phi_val.x[0])
-        init_phi_est = phi_val.x[0]
-        percent_alive = np.sum(Objects[0].profile.n_macroparticles)/n_macroparticles *100
-        percent_alives.append(percent_alive)
-        print('{x:2f} percent of the beam is alive'.format(x=percent_alive))
+#         # Run the simulation to save the objects
+#         Objects, phase2_arr = run_simulation(entry, [t_arr[i], t_arr[i-1]], ring, phase2_arr[1], Objects, sync_momentum, phi_val.x[0], init = False , voltages=voltages)
+#         phis.append(phi_val.x[0])
+#         init_phi_est = phi_val.x[0]
+#         percent_alive = np.sum(Objects[0].profile.n_macroparticles)/n_macroparticles *100
+#         percent_alives.append(percent_alive)
+#         print('{x:2f} percent of the beam is alive'.format(x=percent_alive))
         
 
         
 
 
-means = np.array(means)
-std = np.array(std)
-xs = np.array(xs)
+# means = np.array(means)
+# std = np.array(std)
+# xs = np.array(xs)
 
-evals = np.array(evals)
+# evals = np.array(evals)
 
-turn_plots = np.zeros_like(means)
-for i, entry in enumerate(sim_arr):
-    if i ==0: 
-        pass 
-    else:
-        turn_plots[i-1,:] = entry[2]
+# turn_plots = np.zeros_like(means)
+# for i, entry in enumerate(sim_arr):
+#     if i ==0: 
+#         pass 
+#     else:
+#         turn_plots[i-1,:] = entry[2]
     
 
 
 
-obj_func_plotter(xs.flatten(),means.flatten(),std.flatten(),evals,turn_plots.flatten())
+# obj_func_plotter(xs.flatten(),means.flatten(),std.flatten(),evals,turn_plots.flatten())
 
 
-fig, ax = plt.subplots()
-ax.plot(t_arr*1000, phis, label = r'Optimized Phase $\Phi_2$')
-ax.plot(ring.cycle_time[:-1]*1000, phi_s1, label = r'Single Harmonic Stable Phase $\phi_{s0}$')
-ax.set_xlabel('Time [ms]')
-ax.set_ylabel('Phase [rad]')
-ax.set_title(r'Optimized 2nd Harmonic Absolute Phase $\Phi_2$')
-ax.legend()
-plt.show(block=True)
+# fig, ax = plt.subplots()
+# ax.plot(t_arr*1000, phis, label = r'Optimized Phase $\Phi_2$')
+# ax.plot(ring.cycle_time[:-1]*1000, phi_s1, label = r'Single Harmonic Stable Phase $\phi_{s0}$')
+# ax.set_xlabel('Time [ms]')
+# ax.set_ylabel('Phase [rad]')
+# ax.set_title(r'Optimized 2nd Harmonic Absolute Phase $\Phi_2$')
+# ax.legend()
+# plt.show(block=True)
 
-percent_alives = np.array(percent_alives)
-# Save the phase array 
-np.save('mean_obj.npy', means)
-np.save('std_obj.npy', std)
-np.save('x_obj.npy', xs)
-np.save('evals.npy', evals)
-np.save('turns.npy', turn_plots)
-np.save('phase_array.npy', np.array([phase2_arr]))
-np.save('t_arr.npy' , t_arr)
-np.save('percent_alives.npy', percent_alives)
+# percent_alives = np.array(percent_alives)
+# # Save the phase array 
+# np.save('mean_obj.npy', means)
+# np.save('std_obj.npy', std)
+# np.save('x_obj.npy', xs)
+# np.save('evals.npy', evals)
+# np.save('turns.npy', turn_plots)
+# np.save('phase_array.npy', np.array([phase2_arr]))
+# np.save('t_arr.npy' , t_arr)
+# np.save('percent_alives.npy', percent_alives)
 
 
 
