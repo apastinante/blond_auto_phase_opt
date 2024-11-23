@@ -3,6 +3,7 @@ from scipy.constants import c, e, m_p
 from scipy.signal import butter,lfilter, savgol_filter, find_peaks
 import os 
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import os 
 from functools import partial
 # import sys 
@@ -31,6 +32,10 @@ from blond.input_parameters.rf_parameters import RFStation
 from blond.input_parameters.ring import Ring
 from blond.input_parameters.ring import Ring
 from blond.trackers.tracker import FullRingAndRF,RingAndRFTracker
+from skopt.callbacks import CheckpointSaver
+
+checkpoint_saver = CheckpointSaver("./checkpoint.pkl", compress=9) # keyword arguments will be passed to `skopt.dump`
+
 
 from sklearn.gaussian_process.kernels import RBF, Kernel, WhiteKernel, ExpSineSquared, ConstantKernel,Hyperparameter
 from utils_opt.kernels import CausalQuasiPeriodicKernel,CausalRBFKernel
@@ -48,7 +53,41 @@ def crbf_kernel_builder(ndims):
                            vert_length_scale=1.0, vert_length_scale_bounds=(5., 100.0),
                            hor_length_scale_cov_se=1.0 , hor_length_scale_cov_se_bounds=(5., 100.0))
 
+def space_constraint(phi_s0, sim_arr,x, return_valid = False):
+    """This function implements the causality in the choice of x.
+    The constraint is that |x[i]-x[i-1]| < threshold, such that 
+    the phase program is causal and does not oscillate significantly
+    over the cycle --> reduces the search space of optimal next_x
+    Returns:
+        bool : True if the constraint is met
+    """
+    natural_change = []
+    for i in range(1,len(x)):
+        natural_change.append(phi_s0[sim_arr[i][1]-1] - phi_s0[sim_arr[i][0]])
 
+    natural_change = np.abs(np.array(natural_change))
+
+    # Use natural_change to weight the constraint at different points
+    # where the natural_change is bigger, more lenient constraints are allowed
+    norm_change =  natural_change/np.max(natural_change)
+
+    weights = norm_change * 3 # the weights are between 0 and 3
+    weights = np.where(weights < 1, 1, weights) # the weights are between 1 and 3
+
+    min_dev = 0.25
+    if return_valid:
+        new_x = np.copy(x)
+        bools = [True] * (len(x)-1)
+        for i in range(1, len(x)):
+            if np.abs(new_x[i] - new_x[i-1]) > min_dev*np.pi * weights[i-1]:
+                bools[i-1] = False
+                new_x[i] = new_x[i-1] + np.sign(new_x[i] - new_x[i-1]) * min_dev*np.pi * weights[i-1] * 0.7 # 
+        return [new_x, np.any(bools)]
+    else:
+        for i in range(1, len(x)):
+            if np.abs(x[i] - x[i-1]) > min_dev*np.pi * weights[i-1]:
+                return False
+        return True
 
 
 
@@ -416,7 +455,7 @@ for entry in sim_arr:
 
 
 # # Main loop
-max_iter = 20
+max_iter = 25
 init_phi_est = np.pi
 
 global Objects
@@ -437,25 +476,24 @@ ndims = len(sim_arr)
 
 # Make the kernel RBF with influence of only the previous point
 kernel = crbf_kernel_builder(ndims)
-gpr = GaussianProcessRegressor(kernel= kernel, alpha=5,#ConstantKernel(1.0, (0.001, 100.0)) * ExpSineSquared(), 
+gpr = GaussianProcessRegressor(kernel= kernel, alpha=5, #ConstantKernel(1.0, (0.001, 100.0)) * ExpSineSquared(), 
                                    normalize_y=True,
                                    n_restarts_optimizer=2
                                    )
-
+sp_constr = partial(space_constraint, phi_s1, sim_arr)
 # Find the indexes closest to the t_arr values in sync_momentum[0]
 phi_init = []
 phi_init2 = []
 for i,entry in enumerate(sim_arr[:-1]):
     phi_init.append(phi_s1[entry[2]-1])
-    phi_init2.append(phi_s1[entry[2]-1] -0.3*np.pi)
+    phi_init2.append(phi_s1[entry[2]-1] -0.25*np.pi)
+
+plt.axvline()
+phi_init.append(phi_s1[sim_arr[-1][1]-1])
+phi_init2.append(phi_s1[sim_arr[-1][1]-1] -0.25*np.pi)
 
 
-
-phi_init.append(phi_s1[sim_arr[-1][1]-1]-0.45*np.pi)
-phi_init2.append(phi_s1[sim_arr[-1][1]-1] -0.3*np.pi)
-
-
-phi_arr = gp_minimize(obj_func, [(0.47*np.pi, 1.03*np.pi) for i in range(len(t_arr))], base_estimator=gpr , n_calls=round(max_iter*1.3), verbose=True, acq_optimizer="lbfgs",acq_func="EI",n_initial_points=0, n_restarts_optimizer=1, x0=[phi_init2]) #, x0=[phi_init, phi_init2],initial_point_generator = 'lhs' ,verbose=True, acq_func="EI", n_random_starts=max_iter//5)## print(obj_func.value)
+phi_arr = gp_minimize(obj_func, [(0*np.pi, 2*np.pi) for i in range(len(t_arr))] , base_estimator=gpr, n_calls=round(max_iter*1.3), verbose=True,n_initial_points=0, n_restarts_optimizer=1, x0=[phi_init,phi_init2], y0 = [202.31108400941315, 444.21032712239446], callback=[checkpoint_saver], space_constraint=sp_constr) #, x0=[phi_init, phi_init2],initial_point_generator = 'lhs' ,verbose=True, acq_func="EI", n_random_starts=max_iter//5)## print(obj_func.value)
 
 for i, turn_range in enumerate(sim_arr):
     if i == 0:

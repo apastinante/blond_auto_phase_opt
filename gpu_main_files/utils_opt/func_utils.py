@@ -267,8 +267,12 @@ def comp_obj(normalized_ref_profile, turn_range,n_times,ring,phase_programme, Ob
         Objects_copy = [deepcopy(Object) for Object in Objects]
     
     
-    [normalized_profiles , corrections] = run_simulation_int(turn_range,n_times,ring,phase_programme, Objects_copy,sync_momentum,n_phase, unique=unique, final_run = final_run,init=init, voltages=voltages)
+    result = run_simulation_int(turn_range,n_times,ring,phase_programme, Objects_copy,sync_momentum,n_phase, unique=unique, final_run = final_run,init=init, voltages=voltages)
     
+    normalized_profiles = result[0]
+    corrections = result[1]
+    flag = result[2]
+
     
     normalized_profiless = [filter_data(normalized_profile) for normalized_profile in normalized_profiles]
 
@@ -529,7 +533,7 @@ if __name__ == "__main__":
 
     B = B[index_inj:index_ext]
     B_dot = np.gradient(B, t_arr)
-    ind_max = np.argmax(B_dot)
+    ind_max = 0 #np.argmax(B_dot)
 
     plt.figure(1)
     plt.plot(t_arr, B)
@@ -630,7 +634,6 @@ if __name__ == "__main__":
                     # DEFINE REFERENCE SLICES----------------------------------------------------------------
                     
                     for indicez, emittance in enumerate(emittances):
-                        print(ref_ring.t_rev[0])
                         
                         slice_beam = Profile(ref_beam, CutOptions(cut_left=0,
                                                             cut_right=ref_ring.t_rev[0], n_slices=n_slices))

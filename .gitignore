@@ -5,3 +5,4 @@ phase_array.npy
 t_arr.npy
 Sols
 gpu_main_files\gpu_output_files
+checkpoint.pkl
